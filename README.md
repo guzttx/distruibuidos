@@ -2,23 +2,36 @@
 
 Siga estes passos a partir de um clone limpo do repositório.
 
+Instale Python (3.11 é a versão de referência), com `pip` e `venv`, e Docker com Docker Compose. No Windows/macOS, abra o Docker Desktop e aguarde o mecanismo de containers Linux iniciar. No Linux, mantenha o serviço Docker em execução. Também é necessário um navegador; não é preciso instalar Node.js ou PostgreSQL separadamente neste fluxo.
+
 1. Verifique os pré-requisitos:
 
 ```bash
 python --version
 docker --version
 docker compose version
+docker info
 ```
+
+`docker info` deve mostrar o servidor sem erro de conexão. No Linux/macOS, use `python3 --version` se o comando `python` não existir.
 
 2. Entre na pasta do projeto:
 
 ```bash
-cd distribuidos
+cd distruibuidos
 ```
 
-3. Crie o arquivo de ambiente da API:
+A raiz é a pasta que contém `README.md`, `docker-compose.yml`, `backend/` e `frontend/`.
 
-```bash
+3. Crie o arquivo de ambiente da API, caso ainda não exista. No PowerShell:
+
+```powershell
+Copy-Item backend/.env.example backend/.env
+```
+
+No Windows CMD:
+
+```bat
 copy backend\.env.example backend\.env
 ```
 
@@ -31,8 +44,11 @@ cp backend/.env.example backend/.env
 4. Suba o PostgreSQL com Docker Compose:
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
+docker compose ps
 ```
+
+Aguarde o serviço `postgres` ficar saudável antes de iniciar a API.
 
 5. Crie o ambiente virtual Python:
 
@@ -41,10 +57,18 @@ cd backend
 python -m venv .venv
 ```
 
-6. Ative o ambiente virtual no Windows:
+No Linux/macOS, substitua `python -m venv .venv` por `python3 -m venv .venv`.
 
-```bash
-.venv\Scripts\activate
+6. Ative o ambiente virtual no Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+No Windows CMD:
+
+```bat
+.venv\Scripts\activate.bat
 ```
 
 No Linux/macOS:
@@ -53,19 +77,30 @@ No Linux/macOS:
 source .venv/bin/activate
 ```
 
+Se o PowerShell bloquear a ativação, use diretamente `.\.venv\Scripts\python.exe` no lugar de `python` nos próximos comandos dentro de `backend`. A ativação vale apenas para o terminal atual.
+
 7. Instale as dependências:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m pip check
 ```
 
 8. Inicie a API FastAPI:
 
 ```bash
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
-9. Verifique a saúde da API:
+Execute dentro de `backend`, com o ambiente virtual ativo. A API cria a tabela automaticamente ao iniciar e precisa do PostgreSQL acessível. Mantenha este terminal aberto.
+
+9. Verifique a saúde da API em outro terminal. No PowerShell:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+```
+
+No CMD ou Linux/macOS:
 
 ```bash
 curl http://localhost:8000/health
@@ -77,28 +112,25 @@ Health check: `http://localhost:8000/health`
 
 Swagger/OpenAPI: `http://localhost:8000/docs`
 
-10. Abra o frontend em outro terminal:
+10. Abra o frontend em outro terminal, começando na raiz do projeto. No Windows (PowerShell ou CMD):
+
+```powershell
+cd frontend
+..\backend\.venv\Scripts\python.exe -m http.server 5500
+```
+
+No Linux/macOS:
 
 ```bash
 cd frontend
-python -m http.server 5500
+../backend/.venv/bin/python -m http.server 5500
 ```
 
-Depois acesse `http://localhost:5500`.
+Depois acesse exatamente `http://localhost:5500`. Não abra o HTML diretamente nem use `127.0.0.1:5500` com a configuração padrão: são origens diferentes para o CORS.
 
 11. Teste o CRUD pela interface ou pelo Swagger.
 
-12. Quando quiser popular o banco com dados fake, execute a partir da raiz do projeto:
-
-```bash
-python scripts/populate_database.py 100
-```
-
-Para o volume mínimo esperado no trabalho:
-
-```bash
-python scripts/populate_database.py 50000
-```
+12. Para popular o banco, abra outro terminal na raiz do projeto e siga [Como Popular o Banco](#como-popular-o-banco). Use o Python da `.venv` para que o script encontre o Faker e as demais dependências.
 
 ## Sobre o Projeto
 
@@ -189,9 +221,16 @@ Esse fluxo separa responsabilidades: navegador cuida da interface, API cuida das
 | PUT | `/produtos/{id}` | Atualiza produto |
 | DELETE | `/produtos/{id}` | Remove produto |
 
-Exemplo de criação:
+Exemplo de criação no PowerShell:
 
-```bash
+```powershell
+$body = @{ nome = "Notebook"; categoria = "Informatica"; preco = 3500.00; estoque = 10; descricao = "Notebook para estudos" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://localhost:8000/produtos -Method Post -ContentType "application/json" -Body $body
+```
+
+No Windows CMD:
+
+```bat
 curl -X POST http://localhost:8000/produtos ^
   -H "Content-Type: application/json" ^
   -d "{\"nome\":\"Notebook\",\"categoria\":\"Informatica\",\"preco\":3500.00,\"estoque\":10,\"descricao\":\"Notebook para estudos\"}"
@@ -229,7 +268,7 @@ A tabela `produtos` possui:
 | descricao | texto | opcional |
 | created_at | timestamp | preenchido pelo banco |
 
-Inicialmente o projeto usa apenas o índice da chave primária. Isso permite comparar futuramente o impacto de índices adicionais em filtros por `categoria`, `preco` e `categoria + preco`.
+O modelo declara a chave primária e um índice adicional em `id` (`ix_produtos_id`, por causa de `index=True`). Não declara índices nos filtros por `categoria`, `preco` ou `categoria + preco`, permitindo comparar futuramente seu impacto.
 
 Consultas úteis para experimentos futuros:
 
@@ -243,18 +282,21 @@ EXPLAIN ANALYZE SELECT * FROM produtos WHERE categoria = 'Casa' AND preco BETWEE
 
 O script `scripts/populate_database.py` usa Faker para gerar nomes, descrições, preços, estoques e categorias controladas.
 
-Execute com poucos registros primeiro:
+Com o PostgreSQL funcionando, execute a partir da raiz do projeto (a pasta que contém `backend` e `scripts`). Os comandos abaixo usam diretamente o Python do ambiente virtual, sem depender da ativação no terminal.
 
-```bash
-python scripts/populate_database.py 100
+No Windows PowerShell ou CMD, comece com poucos registros:
+
+```powershell
+.\backend\.venv\Scripts\python.exe scripts/populate_database.py 100
 ```
 
-Depois teste volumes maiores:
+No Linux/macOS:
 
 ```bash
-python scripts/populate_database.py 20000
-python scripts/populate_database.py 50000
+./backend/.venv/bin/python scripts/populate_database.py 100
 ```
+
+Para volumes maiores, substitua `100` por `20000` ou `50000`. Cada execução **adiciona** a quantidade informada; não apaga registros anteriores nem ajusta o total do banco.
 
 O script insere em lotes porque milhares de commits individuais tornam a carga mais lenta. Com lotes, várias linhas são confirmadas em uma mesma transação, reduzindo o custo de comunicação e sincronização com o banco.
 
@@ -292,12 +334,12 @@ Para apagar também o volume persistente:
 docker compose down -v
 ```
 
-Remover o volume apaga os dados do PostgreSQL. Depois disso, suba novamente o banco e execute a API para recriar a tabela:
+Remover o volume apaga os dados do PostgreSQL. Depois disso, a partir da raiz e com o ambiente virtual ativo, suba novamente o banco e execute a API para recriar a tabela:
 
 ```bash
-docker compose up -d
+docker compose up -d --wait
 cd backend
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 ## Testes de Desempenho
@@ -318,7 +360,7 @@ Os resultados reais devem ser armazenados em `resultados/`. Não há resultados 
 
 ## Índices e Experimentos Futuros
 
-Na primeira fase, apenas a chave primária recebe índice automaticamente. Em uma etapa posterior, os índices poderão ser criados de forma controlada para comparar desempenho antes e depois:
+Além dos índices em `id` descritos acima, os índices de filtros poderão ser criados de forma controlada para comparar desempenho antes e depois:
 
 ```sql
 CREATE INDEX idx_produtos_categoria ON produtos (categoria);
@@ -331,10 +373,12 @@ Esses índices não foram aplicados agora para preservar uma linha de base simpl
 ## Solução de Problemas
 
 - PostgreSQL não iniciou: verifique `docker compose ps` e `docker compose logs postgres`.
-- Porta 5432 ocupada: altere o mapeamento de porta no `docker-compose.yml` ou pare o serviço conflitante.
+- Erro de conexão com `dockerDesktopLinuxEngine`: abra o Docker Desktop, aguarde o mecanismo iniciar e verifique `docker info`.
+- Porta 5432 ocupada: altere a porta publicada no `docker-compose.yml` e a porta em `DATABASE_URL` no `backend/.env`, ou pare o serviço conflitante. Alterar apenas `POSTGRES_PORT` não muda a conexão da API.
 - FastAPI não conecta ao banco: confirme se `backend/.env` existe e se o container está saudável.
 - Frontend recebe erro de CORS: confira se `FRONTEND_ORIGIN` em `backend/.env` corresponde à URL usada no navegador.
 - Ambiente virtual não está ativado: ative a `.venv` antes de instalar dependências ou iniciar a API.
-- Dependência ausente: execute `pip install -r backend/requirements.txt` dentro do ambiente virtual.
+- `ModuleNotFoundError: No module named 'faker'`: use o comando com o Python da `.venv` na seção [Como Popular o Banco](#como-popular-o-banco). Se persistir, na raiz execute `.\backend\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt` no Windows, ou `./backend/.venv/bin/python -m pip install -r backend/requirements.txt` no Linux/macOS.
+- Outra dependência ausente: dentro de `backend`, com a `.venv` ativa, execute `python -m pip install -r requirements.txt`.
 - Banco ainda não possui tabela: inicie a API uma vez; ela executa `Base.metadata.create_all`.
 - Arquivo `.env` ausente: copie `backend/.env.example` para `backend/.env`.
