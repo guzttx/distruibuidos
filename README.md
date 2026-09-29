@@ -263,7 +263,7 @@ O script insere em lotes porque milhares de commits individuais tornam a carga m
 Entre no container do PostgreSQL:
 
 ```bash
-docker exec -it catalogo_produtos_postgres psql -U catalogo_user -d catalogo_produtos
+docker exec -it catalogo_produtos_postgres_primary psql -U catalogo_user -d catalogo_produtos
 ```
 
 Conte os produtos:
@@ -328,10 +328,103 @@ CREATE INDEX idx_produtos_categoria_preco ON produtos (categoria, preco);
 
 Esses índices não foram aplicados agora para preservar uma linha de base simples nos experimentos.
 
+## Trabalho 2: Tolerância a Falhas com Replicação
+
+A partir daqui o `docker-compose.yml` sobe a arquitetura completa: PostgreSQL com
+streaming replication **síncrona** (1 primário + 1 réplica) e a API FastAPI
+rodando em **3 instâncias stateless** atrás de um load balancer Nginx.
+
+```text
+Cliente/JMeter -> Nginx (porta 8000) -> api1 / api2 / api3 -> postgres-primary
+                                                                    |
+                                                       streaming replication (sync)
+                                                                    v
+                                                             postgres-replica
+```
+
+O frontend e o JMeter continuam rodando fora do Docker, exatamente como antes;
+a única mudança visível de fora é que a porta `8000` agora é servida pelo
+Nginx, não mais diretamente pelo Uvicorn.
+
+### Subindo a arquitetura completa
+
+1. Garanta que `backend/.env` existe (com as chaves `POSTGRES_REPLICATION_USER`
+   e `POSTGRES_REPLICATION_PASSWORD` incluídas — veja `backend/.env.example`).
+2. Suba tudo:
+
+```bash
+docker compose up -d --build
+```
+
+3. Verifique se todos os serviços subiram:
+
+```bash
+docker compose ps
+```
+
+4. Teste a API através do load balancer:
+
+```bash
+curl http://localhost:8000/health
+```
+
+5. Rode o frontend normalmente (ele já aponta para `http://localhost:8000`):
+
+```bash
+cd frontend
+python -m http.server 5500
+```
+
+### Verificando a replicação
+
+No primário, confira se a réplica está conectada e sincronizada:
+
+```bash
+docker exec -it catalogo_produtos_postgres_primary psql -U catalogo_user -d catalogo_produtos -c "SELECT application_name, state, sync_state FROM pg_stat_replication;"
+```
+
+`sync_state` deve aparecer como `sync` — é essa réplica que precisa confirmar
+cada `COMMIT` antes do primário responder ao cliente.
+
+### Simulando failover
+
+**Servidor web:** derrube uma instância da API e confirme que o Nginx segue
+respondendo normalmente pelas outras duas:
+
+```bash
+docker stop catalogo_produtos_api1
+curl http://localhost:8000/health
+docker start catalogo_produtos_api1
+```
+
+**Banco de dados:** derrube o primário e promova a réplica manualmente com o
+script de failover:
+
+```bash
+docker stop catalogo_produtos_postgres_primary
+bash scripts/promote_replica.sh
+```
+
+O script promove a réplica a leitura/escrita e imprime os passos manuais
+restantes (redirecionar `DATABASE_URL` das instâncias da API para o novo
+primário). Esse failover é deliberadamente manual/controlado — é o ponto de
+comparação da Parte 2 contra uma solução com failover automático (Patroni),
+que ficou fora do escopo desta entrega.
+
+### Voltando ao modo do Trabalho 1 (Postgres único, sem replicação)
+
+Para rodar apenas o banco, como no Trabalho 1:
+
+```bash
+docker compose up -d postgres-primary
+cd backend
+uvicorn app.main:app --reload
+```
+
 ## Solução de Problemas
 
-- PostgreSQL não iniciou: verifique `docker compose ps` e `docker compose logs postgres`.
-- Porta 5432 ocupada: altere o mapeamento de porta no `docker-compose.yml` ou pare o serviço conflitante.
+- PostgreSQL não iniciou: verifique `docker compose ps` e `docker compose logs postgres-primary` (ou `postgres-replica`).
+- Porta ocupada (5432/5433/5434/8000): altere o mapeamento de porta no `docker-compose.yml` ou pare o serviço conflitante.
 - FastAPI não conecta ao banco: confirme se `backend/.env` existe e se o container está saudável.
 - Frontend recebe erro de CORS: confira se `FRONTEND_ORIGIN` em `backend/.env` corresponde à URL usada no navegador.
 - Ambiente virtual não está ativado: ative a `.venv` antes de instalar dependências ou iniciar a API.

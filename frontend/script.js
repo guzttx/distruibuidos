@@ -80,17 +80,38 @@ function renderProdutos(produtos) {
 
   produtos.forEach((produto) => {
     const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${produto.id}</td>
-      <td>${produto.nome}</td>
-      <td>${produto.categoria}</td>
-      <td>${formatCurrency(produto.preco)}</td>
-      <td>${produto.estoque}</td>
-      <td>
-        <button type="button" class="secondary" data-action="edit" data-id="${produto.id}">Editar</button>
-        <button type="button" class="danger" data-action="delete" data-id="${produto.id}">Excluir</button>
-      </td>
-    `;
+
+    const criarCelula = (texto) => {
+      const td = document.createElement("td");
+      td.textContent = texto;
+      return td;
+    };
+
+    row.appendChild(criarCelula(produto.id));
+    row.appendChild(criarCelula(produto.nome));
+    row.appendChild(criarCelula(produto.categoria));
+    row.appendChild(criarCelula(formatCurrency(produto.preco)));
+    row.appendChild(criarCelula(produto.estoque));
+
+    const acoesTd = document.createElement("td");
+    const editarBtn = document.createElement("button");
+    editarBtn.type = "button";
+    editarBtn.className = "secondary";
+    editarBtn.dataset.action = "edit";
+    editarBtn.dataset.id = produto.id;
+    editarBtn.textContent = "Editar";
+
+    const excluirBtn = document.createElement("button");
+    excluirBtn.type = "button";
+    excluirBtn.className = "danger";
+    excluirBtn.dataset.action = "delete";
+    excluirBtn.dataset.id = produto.id;
+    excluirBtn.textContent = "Excluir";
+
+    acoesTd.appendChild(editarBtn);
+    acoesTd.appendChild(excluirBtn);
+    row.appendChild(acoesTd);
+
     tbody.appendChild(row);
   });
 }

@@ -1,19 +1,118 @@
 services:
-  postgres:
+  postgres-primary:
     image: postgres:16
-    container_name: catalogo_produtos_postgres
+    container_name: catalogo_produtos_postgres_primary
     restart: unless-stopped
     env_file:
       - ./backend/.env
-    ports:
-      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./postgres/primary/init-replication-user.sh:/docker-entrypoint-initdb.d/init-replication-user.sh:ro
+    # wal_level, synchronous_commit e synchronous_standby_names (que identifica
+    # a replica pelo application_name definido em REPLICA_APPLICATION_NAME no
+    # serviço postgres-replica) são configurados via ALTER SYSTEM dentro do
+    # script de init acima, não aqui: sobrescrever "command" com -c hba_file=...
+    # quebra o servidor temporário de bootstrap do próprio entrypoint oficial
+    # do Postgres e impede a criação do banco/usuário da aplicação.
+    ports:
+      - "5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - catalogo_net
+
+  postgres-replica:
+    build:
+      context: ./postgres/replica
+    container_name: catalogo_produtos_postgres_replica
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PRIMARY_HOST: postgres-primary
+      PRIMARY_PORT: "5432"
+      REPLICA_APPLICATION_NAME: replica1
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - catalogo_net
+
+  api1:
+    build:
+      context: ./backend
+    container_name: catalogo_produtos_api1
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # As 3 instancias da API sao stateless e sempre escrevem no primario.
+      # O literal abaixo precisa ficar em sincronia com POSTGRES_USER/PASSWORD/DB
+      # do backend/.env caso voce altere as credenciais padrao.
+      DATABASE_URL: postgresql+psycopg://catalogo_user:catalogo_password@postgres-primary:5432/catalogo_produtos
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - catalogo_net
+
+  api2:
+    build:
+      context: ./backend
+    container_name: catalogo_produtos_api2
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://catalogo_user:catalogo_password@postgres-primary:5432/catalogo_produtos
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - catalogo_net
+
+  api3:
+    build:
+      context: ./backend
+    container_name: catalogo_produtos_api3
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://catalogo_user:catalogo_password@postgres-primary:5432/catalogo_produtos
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - catalogo_net
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: catalogo_produtos_nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8000:80"
+    depends_on:
+      - api1
+      - api2
+      - api3
+    networks:
+      - catalogo_net
+
+networks:
+  catalogo_net:
+    driver: bridge
 
 volumes:
-  postgres_data:
+  postgres_primary_data:
+  postgres_replica_data:
